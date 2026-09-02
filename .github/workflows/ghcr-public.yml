@@ -1,0 +1,30 @@
+name: ghcr-public
+
+# Job-scoped GITHUB_TOKEN has packages:write; local gh/docker gho_ does not.
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  public:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make ghcr.io/brycedev/fasth3-runpod public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "package info:"
+          gh api -H "Accept: application/vnd.github+json" \
+            /user/packages/container/fasth3-runpod || true
+          echo "set visibility public:"
+          gh api --method PUT -H "Accept: application/vnd.github+json" \
+            /user/packages/container/fasth3-runpod/visibility \
+            -f visibility=public
+          echo "anonymous manifest:"
+          code=$(curl -sI -o /dev/null -w "%{http_code}" \
+            https://ghcr.io/v2/brycedev/fasth3-runpod/manifests/sm100a)
+          echo "http $code"
