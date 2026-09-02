@@ -1,0 +1,9 @@
+# Keep generated media and cached artifacts out of the RunPod build context.
+out/
+__pycache__/
+.cache/
+.git/
+*.mp4
+*.safetensors
+*.pt
+*.pth

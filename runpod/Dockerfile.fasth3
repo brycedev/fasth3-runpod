@@ -1,0 +1,59 @@
+# FastH3 T2VA worker image for RunPod (pods or serverless).
+# Kernel is compiled HERE (once). Weights live on a network volume (HF_HOME).
+#
+# Matches fasth3_lib.FASTH3_IMAGE_REV / TORCH_CUDA_ARCH_LIST=10.0a.
+# Do not install the PyPI fastvideo-kernel cu130 wheel — CMake's 100a fatbin
+# emits an empty sm_100 stub that B200 launches with `invalid argument`.
+#
+# Build on linux/amd64 (GitHub Actions or an x86_64 VM). Apple Silicon QEMU
+# will take hours and often fail. Push to GHCR/Docker Hub, then point a
+# template at the tag. See runpod/README.md.
+
+FROM nvidia/cuda:13.0.1-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CUDA_HOME=/usr/local/cuda \
+    CUDACXX=/usr/local/cuda/bin/nvcc \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++ \
+    CUDAHOSTCXX=/usr/bin/g++ \
+    TORCH_CUDA_ARCH_LIST=10.0a \
+    FASTVIDEO_VSA_SM100A=1 \
+    UV_TORCH_BACKEND=cu130 \
+    CMAKE_ARGS="-DFASTVIDEO_KERNEL_BUILD_TK=OFF -DFASTVIDEO_KERNEL_BUILD_ATTN_QAT_INFER=OFF" \
+    HF_HOME=/runpod-volume/hf \
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/h3 \
+    FASTVIDEO_ROOT=/opt/fastvideo
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ffmpeg curl ninja-build g++ cmake python3 python3-pip python3-venv \
+      python3-dev ca-certificates openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python3.12
+
+RUN python3 -m pip install --break-system-packages --no-cache-dir uv
+
+# Cache-bust: keep in lockstep with fasth3_lib.FASTH3_IMAGE_REV.
+RUN echo fasth3-sm100a-native-100a-2026-09-02e \
+    && git clone --depth 1 --recurse-submodules --shallow-submodules \
+         https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo \
+    && git -C /opt/fastvideo log -1 --oneline \
+    && test -f /opt/fastvideo/fastvideo-kernel/include/cutlass/include/cutlass/cutlass.h \
+    && cd /opt/fastvideo && uv pip install --system --prerelease=allow -e '.[fasth3]' hf_transfer runpod
+
+COPY runpod/check_sm100a_cubin.py /tmp/check_sm100a_cubin.py
+RUN python3 /tmp/check_sm100a_cubin.py && rm /tmp/check_sm100a_cubin.py
+
+COPY fasth3_lib.py /opt/h3/fasth3_lib.py
+COPY runpod/hydrate.py /opt/h3/hydrate.py
+COPY runpod/worker.py /opt/h3/worker.py
+COPY runpod/serverless.py /opt/h3/serverless.py
+COPY runpod/entrypoint_fasth3.sh /opt/h3/entrypoint_fasth3.sh
+RUN chmod +x /opt/h3/entrypoint_fasth3.sh
+
+EXPOSE 8000 22
+WORKDIR /opt/fastvideo
+ENTRYPOINT ["/opt/h3/entrypoint_fasth3.sh"]
