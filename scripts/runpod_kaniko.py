@@ -116,7 +116,7 @@ def main() -> int:
         "cloud": "SECURE",
         "cpu": {"id": "cpu3m", "vcpuCount": 8},
         "dataCenterIds": ["EU-RO-1"],
-        "disk": 120,
+        "disk": 80,
         "env": {
             "GHCR_TOKEN": token,
             "GHCR_USER": os.environ.get("GHCR_USER", "brycedev"),
