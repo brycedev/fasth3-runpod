@@ -41,7 +41,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir uv
 # credentials (`No such device or address`) and the pod restart-loops.
 # Clone FastVideo only, then unpack public tarballs for the gitlink SHAs.
 RUN set -eux; \
-    echo fasth3-sm100a-native-100a-2026-09-02f; \
+    echo fasth3-sm100a-native-100a-2026-09-02g; \
     rm -rf /opt/fastvideo; \
     GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c http.version=HTTP/1.1 \
       clone --depth 1 https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo; \
@@ -57,7 +57,7 @@ RUN set -eux; \
         | tar -xz --strip-components=1 -C "/opt/fastvideo/$path"; \
     done; \
     test -f /opt/fastvideo/fastvideo-kernel/include/cutlass/include/cutlass/cutlass.h; \
-    cd /opt/fastvideo && uv pip install --system --prerelease=allow -e '.[fasth3]' hf_transfer runpod
+    cd /opt/fastvideo && uv pip install --system --break-system-packages --prerelease=allow -e '.[fasth3]' hf_transfer runpod
 
 COPY runpod/check_sm100a_cubin.py /tmp/check_sm100a_cubin.py
 RUN python3 /tmp/check_sm100a_cubin.py && rm /tmp/check_sm100a_cubin.py
