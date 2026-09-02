@@ -106,9 +106,9 @@ def main() -> int:
         sys.exit("GHCR_TOKEN missing")
     start = (
         "set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; "
-        "apt-get update -qq; apt-get install -y -qq git ca-certificates curl; "
-        "git clone --depth 1 https://github.com/brycedev/fasth3-runpod.git /opt/src; "
-        "bash /opt/src/runpod/kaniko-build.sh"
+        "apt-get update -qq; apt-get install -y -qq git ca-certificates curl buildah uidmap; "
+        "if [ ! -d /opt/src/.git ]; then git clone --depth 1 https://github.com/brycedev/fasth3-runpod.git /opt/src; fi; "
+        "bash /opt/src/runpod/buildah-build.sh"
     )
     payload = {
         "name": "fasth3-kaniko",
