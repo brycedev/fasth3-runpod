@@ -5,6 +5,11 @@ export DEBIAN_FRONTEND=noninteractive
 DEST="${DEST:-ghcr.io/brycedev/fasth3-runpod:sm100a}"
 CONTEXT_DIR="${CONTEXT_DIR:-/opt/src}"
 
+if ! command -v buildah >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y -qq buildah git ca-certificates curl uidmap >/tmp/apt.log
+fi
+
 if [[ ! -d "${CONTEXT_DIR}/.git" ]]; then
   git clone --depth 1 https://github.com/brycedev/fasth3-runpod.git "${CONTEXT_DIR}"
 fi
@@ -16,16 +21,12 @@ if [[ -z "${GHCR_TOKEN:-}" ]]; then
 fi
 
 echo "buildah $(buildah --version || true)" >&2
-buildah login --username "${GHCR_USER:-brycedev}" --password-stdin ghcr.io <<EOF
-${GHCR_TOKEN}
-EOF
+printf '%s\n' "${GHCR_TOKEN}" | buildah login --username "${GHCR_USER:-brycedev}" --password-stdin ghcr.io
 
-# vfs works without privileged overlay; chroot isolation avoids needing runc/kvm.
 export STORAGE_DRIVER=vfs
 buildah bud \
   --isolation chroot \
   --storage-driver vfs \
-  --jobs "$(nproc)" \
   -f runpod/Dockerfile.fasth3 \
   -t "${DEST}" \
   -t ghcr.io/brycedev/fasth3-runpod:latest \

@@ -138,6 +138,9 @@ def main() -> int:
     try:
         while time.time() < deadline:
             st, pbody = req("GET", f"{API}/pods/{pod_id}")
+            if st in (404, 410):
+                print(json.dumps({"ok": False, "status": "GONE", "http": st}), flush=True)
+                return 1
             p = pbody.get("pod") if isinstance(pbody, dict) and "pod" in pbody else pbody
             status = (p or {}).get("status") if isinstance(p, dict) else None
             chunk = logs(pod_id)
