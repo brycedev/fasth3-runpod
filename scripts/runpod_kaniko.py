@@ -120,12 +120,12 @@ def main() -> int:
     # User namespaces are not required (unlike buildah on ubuntu).
     start = (
         "set -eu; "
+        "mkdir -p /tmp /kaniko/.docker; "
         "rm -rf /kaniko/buildcontext /tmp/fasth3-runpod-main /tmp/src.tgz; "
-        "mkdir -p /kaniko/.docker; "
         "AUTH=$(printf '%s' \"${GHCR_USER}:${GHCR_TOKEN}\" | /busybox/base64 | tr -d '\\n'); "
         "printf '{\"auths\":{\"ghcr.io\":{\"auth\":\"%s\"}}}\\n' \"$AUTH\" > /kaniko/.docker/config.json; "
         "unset GHCR_TOKEN AUTH; "
-        "wget -q -O /tmp/src.tgz https://github.com/brycedev/fasth3-runpod/archive/refs/heads/main.tar.gz; "
+        "wget -O /tmp/src.tgz https://codeload.github.com/brycedev/fasth3-runpod/tar.gz/refs/heads/main; "
         "tar -xzf /tmp/src.tgz -C /tmp; "
         "exec /kaniko/executor "
         "--context=dir:///tmp/fasth3-runpod-main "
