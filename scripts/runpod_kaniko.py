@@ -174,7 +174,8 @@ def main() -> int:
         ),
         flush=True,
     )
-    deadline = time.time() + 3 * 3600
+    # GHA job timeout-minutes is 240; leave ~10 min for terminate + logs.
+    deadline = time.time() + 230 * 60
     last = ""
     try:
         while time.time() < deadline:

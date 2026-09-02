@@ -37,13 +37,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m pip install --break-system-packages --no-cache-dir uv
 
 # Cache-bust: keep in lockstep with fasth3_lib.FASTH3_IMAGE_REV.
-RUN echo fasth3-sm100a-native-100a-2026-09-02e \
-    && rm -rf /opt/fastvideo \
-    && git clone --depth 1 --recurse-submodules --shallow-submodules \
-         https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo \
-    && git -C /opt/fastvideo log -1 --oneline \
-    && test -f /opt/fastvideo/fastvideo-kernel/include/cutlass/include/cutlass/cutlass.h \
-    && cd /opt/fastvideo && uv pip install --system --prerelease=allow -e '.[fasth3]' hf_transfer runpod
+# Kaniko has no TTY; `git clone --recurse-submodules` prompts for GitHub
+# credentials (`No such device or address`) and the pod restart-loops.
+# Clone FastVideo only, then unpack public tarballs for the gitlink SHAs.
+RUN set -eux; \
+    echo fasth3-sm100a-native-100a-2026-09-02f; \
+    rm -rf /opt/fastvideo; \
+    GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c http.version=HTTP/1.1 \
+      clone --depth 1 https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo; \
+    git -C /opt/fastvideo log -1 --oneline; \
+    for pair in \
+      "fastvideo-kernel/include/cutlass NVIDIA/cutlass" \
+      "fastvideo-kernel/include/tk HazyResearch/ThunderKittens"; do \
+      set -- $pair; path="$1"; repo="$2"; \
+      sha=$(git -C /opt/fastvideo ls-tree HEAD "$path" | awk '{print $3}'); \
+      test -n "$sha"; \
+      mkdir -p "/opt/fastvideo/$path"; \
+      curl -fsSL "https://codeload.github.com/${repo}/tar.gz/${sha}" \
+        | tar -xz --strip-components=1 -C "/opt/fastvideo/$path"; \
+    done; \
+    test -f /opt/fastvideo/fastvideo-kernel/include/cutlass/include/cutlass/cutlass.h; \
+    cd /opt/fastvideo && uv pip install --system --prerelease=allow -e '.[fasth3]' hf_transfer runpod
 
 COPY runpod/check_sm100a_cubin.py /tmp/check_sm100a_cubin.py
 RUN python3 /tmp/check_sm100a_cubin.py && rm /tmp/check_sm100a_cubin.py
