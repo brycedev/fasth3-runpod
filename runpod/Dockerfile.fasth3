@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # FastH3 T2VA worker image for RunPod (pods or serverless).
 # Kernel is compiled HERE (once). Weights live on a network volume (HF_HOME).
 #
@@ -25,7 +26,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt/h3 \
-    FASTVIDEO_ROOT=/opt/fastvideo
+    FASTVIDEO_ROOT=/opt/fastvideo \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_ASKPASS=/bin/true \
+    GIT_CONFIG_COUNT=3 \
+    GIT_CONFIG_KEY_0=http.version \
+    GIT_CONFIG_VALUE_0=HTTP/1.1 \
+    GIT_CONFIG_KEY_1=submodule.recurse \
+    GIT_CONFIG_VALUE_1=false \
+    GIT_CONFIG_KEY_2=fetch.recurseSubmodules \
+    GIT_CONFIG_VALUE_2=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ffmpeg curl ninja-build g++ cmake python3 python3-pip python3-venv \
@@ -37,14 +47,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m pip install --break-system-packages --no-cache-dir uv
 
 # Cache-bust: keep in lockstep with fasth3_lib.FASTH3_IMAGE_REV.
-# Kaniko has no TTY; `git clone --recurse-submodules` prompts for GitHub
-# credentials (`No such device or address`) and the pod restart-loops.
+# Kaniko has no TTY; git clone of uv git-deps (flash-attn-4 → Dao-AILab/flash-attention
+# plus ROCm submodules) prompts for GitHub credentials and the pod restart-loops.
+# Optional github_token secret authenticates public clones (rate limit / no TTY).
 # Clone FastVideo only, then unpack public tarballs for the gitlink SHAs.
-RUN set -eux; \
-    echo fasth3-sm100a-native-100a-2026-09-02g; \
+RUN --mount=type=secret,id=github_token,required=false \
+    set -eux; \
+    echo fasth3-sm100a-native-100a-2026-09-02h; \
+    if [ -f /run/secrets/github_token ]; then \
+      b64=$(printf 'x-access-token:%s' "$(cat /run/secrets/github_token)" | base64 | tr -d '\n'); \
+      git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"; \
+    fi; \
+    git config --global credential.helper ''; \
     rm -rf /opt/fastvideo; \
-    GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c http.version=HTTP/1.1 \
-      clone --depth 1 https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo; \
+    git -c credential.helper= -c http.version=HTTP/1.1 \
+      clone --depth 1 --no-recurse-submodules \
+      https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo; \
     git -C /opt/fastvideo log -1 --oneline; \
     for pair in \
       "fastvideo-kernel/include/cutlass NVIDIA/cutlass" \
@@ -57,7 +75,8 @@ RUN set -eux; \
         | tar -xz --strip-components=1 -C "/opt/fastvideo/$path"; \
     done; \
     test -f /opt/fastvideo/fastvideo-kernel/include/cutlass/include/cutlass/cutlass.h; \
-    cd /opt/fastvideo && uv pip install --system --break-system-packages --prerelease=allow -e '.[fasth3]' hf_transfer runpod
+    cd /opt/fastvideo && uv pip install --system --break-system-packages --prerelease=allow -e '.[fasth3]' hf_transfer runpod; \
+    git config --global --unset-all http.https://github.com/.extraheader || true
 
 COPY runpod/check_sm100a_cubin.py /tmp/check_sm100a_cubin.py
 RUN python3 /tmp/check_sm100a_cubin.py && rm /tmp/check_sm100a_cubin.py

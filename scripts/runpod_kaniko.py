@@ -124,7 +124,7 @@ def main() -> int:
         "rm -rf /kaniko/buildcontext /tmp/fasth3-runpod-main /tmp/src.tgz; "
         "AUTH=$(printf '%s' \"${GHCR_USER}:${GHCR_TOKEN}\" | /busybox/base64 | tr -d '\\n'); "
         "printf '{\"auths\":{\"ghcr.io\":{\"auth\":\"%s\"}}}\\n' \"$AUTH\" > /kaniko/.docker/config.json; "
-        "unset GHCR_TOKEN AUTH; "
+        "unset AUTH; "
         "wget -O /tmp/src.tgz https://codeload.github.com/brycedev/fasth3-runpod/tar.gz/refs/heads/main; "
         "tar -xzf /tmp/src.tgz -C /tmp; "
         "exec /kaniko/executor "
@@ -136,6 +136,7 @@ def main() -> int:
         "--compressed-caching=false "
         "--snapshot-mode=redo "
         "--use-new-run "
+        "--secret=id=github_token,env=GHCR_TOKEN "
         "--verbosity=info"
     )
     payload = {
