@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """Start a RunPod CPU kaniko builder and wait until it pushes ghcr.io/brycedev/fasth3-runpod.
 
-Uses job-scoped GHCR_TOKEN (GHA GITHUB_TOKEN). Never prints it. Not a B200.
+Uses REST v1 dockerEntrypoint so we can wrap gcr.io/kaniko-project/executor:debug
+(kaniko has no standalone binary; buildah needs user namespaces RunPod denies).
+Job-scoped GHCR_TOKEN (GHA GITHUB_TOKEN). Never prints it. Not a B200.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shlex
 import socket
 import sys
 import time
 import urllib.error
 import urllib.request
 
-API = "https://api.runpod.io/v2"
+API_V2 = "https://api.runpod.io/v2"
+REST = "https://rest.runpod.io/v1"
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36"
 )
 DEST = os.environ.get("DEST", "ghcr.io/brycedev/fasth3-runpod:sm100a")
+KANIKO_IMAGE = "gcr.io/kaniko-project/executor:v1.24.0-debug"
 
 
 def _key() -> str:
@@ -57,7 +60,7 @@ def req(method: str, url: str, data: dict | None = None):
 
 
 def logs(pod_id: str, seconds: float = 8.0) -> str:
-    url = f"{API}/pods/{pod_id}/logs?source=container&tail=250"
+    url = f"{API_V2}/pods/{pod_id}/logs?source=container&tail=250"
     r = urllib.request.Request(
         url,
         headers={
@@ -100,50 +103,85 @@ def logs(pod_id: str, seconds: float = 8.0) -> str:
     return "\n".join(lines)
 
 
+def _redact(text: str) -> str:
+    out = []
+    for line in text.splitlines():
+        if any(s in line for s in ("ghs_", "gho_", "ghu_", "GHCR_TOKEN", "rpa_")):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def main() -> int:
     token = os.environ.get("GHCR_TOKEN")
     if not token:
         sys.exit("GHCR_TOKEN missing")
+    # Busybox sh in the kaniko debug image. Write GHCR auth then exec the executor.
+    # User namespaces are not required (unlike buildah on ubuntu).
     start = (
-        "set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; "
-        "apt-get update -qq; apt-get install -y -qq git ca-certificates curl buildah uidmap; "
-        "if [ ! -d /opt/src/.git ]; then git clone --depth 1 https://github.com/brycedev/fasth3-runpod.git /opt/src; fi; "
-        "bash /opt/src/runpod/buildah-build.sh"
+        "set -eu; "
+        "mkdir -p /kaniko/.docker; "
+        "AUTH=$(printf '%s' \"${GHCR_USER}:${GHCR_TOKEN}\" | /busybox/base64 | tr -d '\\n'); "
+        "printf '{\"auths\":{\"ghcr.io\":{\"auth\":\"%s\"}}}\\n' \"$AUTH\" > /kaniko/.docker/config.json; "
+        "unset GHCR_TOKEN AUTH; "
+        "exec /kaniko/executor "
+        "--context=git://github.com/brycedev/fasth3-runpod.git#refs/heads/main "
+        "--dockerfile=runpod/Dockerfile.fasth3 "
+        f"--destination={DEST} "
+        "--destination=ghcr.io/brycedev/fasth3-runpod:latest "
+        "--custom-platform=linux/amd64 "
+        "--compressed-caching=false "
+        "--snapshot-mode=redo "
+        "--use-new-run "
+        "--verbosity=info"
     )
     payload = {
         "name": "fasth3-kaniko",
-        "image": "ubuntu:24.04",
-        "cloud": "SECURE",
-        "cpu": {"id": "cpu3m", "vcpuCount": 8},
+        "imageName": KANIKO_IMAGE,
+        "cloudType": "SECURE",
+        "computeType": "CPU",
+        "cpuFlavorIds": ["cpu3m"],
+        "vcpuCount": 8,
         "dataCenterIds": ["EU-RO-1"],
-        "disk": 80,
+        "containerDiskInGb": 80,
         "env": {
             "GHCR_TOKEN": token,
             "GHCR_USER": os.environ.get("GHCR_USER", "brycedev"),
             "DEST": DEST,
-            "CONTEXT_DIR": "/opt/src",
-            "PYTHONUNBUFFERED": "1",
         },
-        "args": "bash -lc " + shlex.quote(start),
+        "dockerEntrypoint": ["/busybox/sh", "-c"],
+        "dockerStartCmd": [start],
     }
-    code, body = req("POST", f"{API}/pods", payload)
-    pod = body.get("pod") if isinstance(body, dict) and "pod" in body else body
-    if code not in (200, 201) or not isinstance(pod, dict):
+    code, body = req("POST", f"{REST}/pods", payload)
+    pod = body if isinstance(body, dict) and body.get("id") else (
+        body.get("pod") if isinstance(body, dict) else None
+    )
+    if code not in (200, 201) or not isinstance(pod, dict) or not pod.get("id"):
         print(json.dumps({"ok": False, "http": code, "body": body}, indent=2)[:4000])
         return 1
     pod_id = pod["id"]
-    print(json.dumps({"ok": True, "pod_id": pod_id, "cost": pod.get("cost"), "dc": pod.get("dataCenterId")}), flush=True)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "pod_id": pod_id,
+                "cost": pod.get("costPerHr") or pod.get("cost"),
+                "dc": (pod.get("machine") or {}).get("dataCenterId") or pod.get("dataCenterId"),
+            }
+        ),
+        flush=True,
+    )
     deadline = time.time() + 3 * 3600
     last = ""
     try:
         while time.time() < deadline:
-            st, pbody = req("GET", f"{API}/pods/{pod_id}")
+            st, pbody = req("GET", f"{REST}/pods/{pod_id}")
             if st in (404, 410):
                 print(json.dumps({"ok": False, "status": "GONE", "http": st}), flush=True)
                 return 1
-            p = pbody.get("pod") if isinstance(pbody, dict) and "pod" in pbody else pbody
-            status = (p or {}).get("status") if isinstance(p, dict) else None
-            chunk = logs(pod_id)
+            p = pbody if isinstance(pbody, dict) else {}
+            status = p.get("desiredStatus") or p.get("lastStatusChange") or p.get("status")
+            chunk = _redact(logs(pod_id))
             if chunk and chunk != last:
                 delta = chunk[len(last) :] if chunk.startswith(last) else chunk
                 sys.stdout.write(delta + "\n")
@@ -153,17 +191,18 @@ def main() -> int:
             if "pushed" in low and "ghcr.io/brycedev/fasth3-runpod" in low:
                 print("BUILD_OK", flush=True)
                 return 0
-            if status in ("EXITED", "TERMINATED", "FAILED"):
+            desired = str(p.get("desiredStatus") or "")
+            if desired in ("EXITED", "TERMINATED") or str(status) in ("EXITED", "TERMINATED", "FAILED"):
                 if "pushed" in last.lower():
                     print("BUILD_OK", flush=True)
                     return 0
-                print(json.dumps({"ok": False, "status": status}), flush=True)
+                print(json.dumps({"ok": False, "status": desired or status}), flush=True)
                 return 1
             time.sleep(20)
         print(json.dumps({"ok": False, "timeout": True}), flush=True)
         return 1
     finally:
-        req("DELETE", f"{API}/pods/{pod_id}")
+        req("DELETE", f"{REST}/pods/{pod_id}")
         print("terminated", pod_id, flush=True)
 
 
