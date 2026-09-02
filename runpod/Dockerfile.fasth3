@@ -38,6 +38,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir uv
 
 # Cache-bust: keep in lockstep with fasth3_lib.FASTH3_IMAGE_REV.
 RUN echo fasth3-sm100a-native-100a-2026-09-02e \
+    && rm -rf /opt/fastvideo \
     && git clone --depth 1 --recurse-submodules --shallow-submodules \
          https://github.com/hao-ai-lab/FastVideo.git /opt/fastvideo \
     && git -C /opt/fastvideo log -1 --oneline \
