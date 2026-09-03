@@ -1,0 +1,25 @@
+name: comfy-larry-image
+
+# Bake current app.py Comfy pins (SLA / Sage / v4) and push
+# ghcr.io/brycedev/fasth3-runpod:comfy-larry via RunPod CPU kaniko.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  kaniko-on-runpod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push Comfy larry image
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          DEST: ghcr.io/brycedev/fasth3-runpod:comfy-larry
+        run: python3 scripts/runpod_kaniko_comfy.py
