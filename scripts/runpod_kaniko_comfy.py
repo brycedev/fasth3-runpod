@@ -131,6 +131,7 @@ def main() -> int:
         "--compressed-caching=false "
         "--snapshot-mode=redo "
         "--use-new-run "
+        "--build-arg GITHUB_TOKEN=${GHCR_TOKEN} "
         "--verbosity=info"
     )
     payload = {

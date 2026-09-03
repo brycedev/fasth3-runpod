@@ -2,6 +2,9 @@
 # Pins match app.py ComfyWorker. Weights live on a network volume — do not
 # bake ~43 GB of INT8 DiT / NVFP4 CLIP / VAEs / v4 LoRA into this image.
 # Skip RTX VSR / NGX (not needed for the T2VA bench).
+#
+# Use GitHub tarballs, not git clone: kaniko has no TTY and git prompts for
+# credentials (same failure FastH3 hit before the token/tarball path).
 
 FROM nvidia/cuda:13.0.1-devel-ubuntu24.04
 
@@ -23,38 +26,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m pip install --break-system-packages --no-cache-dir uv
 
 # ComfyUI pin: app.py comfy_image (b78cec879b94).
-# rm -rf first: kaniko retries of a failed RUN leave /comfyui behind.
 RUN rm -rf /comfyui \
-    && git clone https://github.com/Comfy-Org/ComfyUI /comfyui \
-    && git -C /comfyui checkout b78cec879b94 \
+    && mkdir -p /comfyui \
+    && curl -fsSL https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/b78cec879b94 \
+         | tar -xz --strip-components=1 -C /comfyui \
     && python3 -m uv pip install --system --break-system-packages \
          -r /comfyui/requirements.txt sageattention httpx pillow
 
 # Custom nodes: same SHAs as app.py. PlagueKind pack is pruned to SLA only.
-RUN rm -rf /comfyui/custom_nodes/ComfyUI-MiniMax-H3-Turbo \
-    && git clone https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo \
-      /comfyui/custom_nodes/ComfyUI-MiniMax-H3-Turbo \
-    && git -C /comfyui/custom_nodes/ComfyUI-MiniMax-H3-Turbo checkout 4274783a23af \
-    && git clone https://github.com/kijai/ComfyUI-SolAttn_triton \
-      /comfyui/custom_nodes/ComfyUI-SolAttn_triton \
-    && git -C /comfyui/custom_nodes/ComfyUI-SolAttn_triton checkout dfc2e31a41af \
-    && git clone https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3 \
-      /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3 \
-    && git -C /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3 checkout 9dc51b7fbb6e \
-    && git clone https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes \
-      /comfyui/custom_nodes/ComfyUI-PlagueKind-Nodes \
-    && git -C /comfyui/custom_nodes/ComfyUI-PlagueKind-Nodes checkout b8d456ccea03 \
-    && rm -rf /comfyui/custom_nodes/ComfyUI-PlagueKind-Nodes/{bbox_crop,crop_and_resize,ltx_lora_loader,unified_resize,bundle_nodes,ComfyUI-H3-AdaLN-LoRA-Fix} \
-    && git clone https://github.com/kijai/ComfyUI-KJNodes \
-      /comfyui/custom_nodes/ComfyUI-KJNodes \
-    && git -C /comfyui/custom_nodes/ComfyUI-KJNodes checkout 3f20054214fe \
-    && python3 -m uv pip install --system --break-system-packages \
-         -r /comfyui/custom_nodes/ComfyUI-KJNodes/requirements.txt \
-    && python3 -m uv pip install --system --break-system-packages \
-         diffusers einops kornia 'ninja~=1.11.1.4' 'transformers[timm]>=4.50.0' \
-    && git clone https://github.com/scottmudge/ComfyUI_MinimaxH3HybridLoader \
-      /comfyui/custom_nodes/ComfyUI_MinimaxH3HybridLoader \
-    && git -C /comfyui/custom_nodes/ComfyUI_MinimaxH3HybridLoader checkout a44c69b02242
+RUN set -eux; \
+    fetch() { \
+      dest="$1"; repo="$2"; sha="$3"; \
+      rm -rf "$dest"; mkdir -p "$dest"; \
+      curl -fsSL "https://codeload.github.com/${repo}/tar.gz/${sha}" \
+        | tar -xz --strip-components=1 -C "$dest"; \
+    }; \
+    fetch /comfyui/custom_nodes/ComfyUI-MiniMax-H3-Turbo Larryvrh/ComfyUI-MiniMax-H3-Turbo 4274783a23af; \
+    fetch /comfyui/custom_nodes/ComfyUI-SolAttn_triton kijai/ComfyUI-SolAttn_triton dfc2e31a41af; \
+    fetch /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3 xmarre/ComfyUI-Spectrum-MiniMax-H3 9dc51b7fbb6e; \
+    fetch /comfyui/custom_nodes/ComfyUI-PlagueKind-Nodes PlagueKind/ComfyUI-PlagueKind-Nodes b8d456ccea03; \
+    rm -rf /comfyui/custom_nodes/ComfyUI-PlagueKind-Nodes/{bbox_crop,crop_and_resize,ltx_lora_loader,unified_resize,bundle_nodes,ComfyUI-H3-AdaLN-LoRA-Fix}; \
+    fetch /comfyui/custom_nodes/ComfyUI-KJNodes kijai/ComfyUI-KJNodes 3f20054214fe; \
+    python3 -m uv pip install --system --break-system-packages \
+         -r /comfyui/custom_nodes/ComfyUI-KJNodes/requirements.txt; \
+    python3 -m uv pip install --system --break-system-packages \
+         diffusers einops kornia 'ninja~=1.11.1.4' 'transformers[timm]>=4.50.0'; \
+    fetch /comfyui/custom_nodes/ComfyUI_MinimaxH3HybridLoader scottmudge/ComfyUI_MinimaxH3HybridLoader a44c69b02242
 
 COPY turbo_patch.py /opt/h3/turbo_patch.py
 RUN python3 /opt/h3/turbo_patch.py
